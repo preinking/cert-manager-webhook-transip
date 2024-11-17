@@ -1,0 +1,35 @@
+# Makefile.version - Common Versioning Logic
+
+RELEASE_SUPPORT_PATH = $(shell dirname $(abspath $(lastword $(MAKEFILE_LIST))))/.make-release-support
+
+# Retrieve Version and Tag from Release Support
+VERSION = $(shell . $(RELEASE_SUPPORT_PATH) ; getVersion)
+TAG = $(shell . $(RELEASE_SUPPORT_PATH) ; getTag)
+
+# Version Management Functions
+.PHONY: showver tag-patch-release tag-minor-release tag-major-release
+
+# Show Current Version
+showver:
+	@. $(RELEASE_SUPPORT_PATH); getVersion
+
+# Tagging for Patch, Minor, and Major Releases
+tag-patch-release: VERSION := $(shell . $(RELEASE_SUPPORT_PATH); nextPatchLevel)
+tag-patch-release: tag
+
+tag-minor-release: VERSION := $(shell . $(RELEASE_SUPPORT_PATH); nextMinorLevel)
+tag-minor-release: tag
+
+tag-major-release: VERSION := $(shell . $(RELEASE_SUPPORT_PATH); nextMajorLevel)
+tag-major-release: tag
+
+# Tagging Logic
+tag: TAG=$(shell . $(RELEASE_SUPPORT_PATH); getTag $(VERSION))
+tag:
+	@. $(RELEASE_SUPPORT_PATH); \
+	! tagExists $(TAG) || (echo "ERROR: Tag $(TAG) for version $(VERSION) already exists in git" >&2 && exit 1);
+	@. $(RELEASE_SUPPORT_PATH); setRelease $(VERSION)
+	@git add .release
+	@git commit -m "Bumped to version $(VERSION)" || { echo "ERROR: Git commit failed"; exit 1; }
+	@git tag $(TAG) || { echo "ERROR: Git tagging failed"; exit 1; }
+	@[ -n "$(shell git remote -v)" ] && git push --tags || { echo "ERROR: Git push failed"; exit 1; }
