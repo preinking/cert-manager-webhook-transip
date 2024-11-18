@@ -1,12 +1,12 @@
 trigger:
   batch: true
   branches:
-    include: 
+    include:
     - '*'
   paths:
-    include: 
+    include:
     - common/ci-steps-template.yml
-    
+
 pr: none
 
 pool:
