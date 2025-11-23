@@ -1,27 +1,28 @@
 package main
 
 import (
-	"github.com/cert-manager/cert-manager/pkg/issuer/acme/dns/util"
-	"encoding/json"
-	"context"
-	"strings"
 	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
 	"os"
-
-	extapi "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	v1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
+	"strings"
 
 	"github.com/cert-manager/cert-manager/pkg/acme/webhook/apis/acme/v1alpha1"
 	"github.com/cert-manager/cert-manager/pkg/acme/webhook/cmd"
+	"github.com/cert-manager/cert-manager/pkg/issuer/acme/dns/util"
 	"github.com/transip/gotransip/v6"
 	"github.com/transip/gotransip/v6/domain"
 	"github.com/transip/gotransip/v6/repository"
+	v1 "k8s.io/api/core/v1"
+	extapi "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/klog/v2"
 )
 
+// GroupName is the API group name used to register the webhook with cert-manager
 var GroupName = os.Getenv("GROUP_NAME")
 
 func main() {
@@ -88,11 +89,11 @@ func (c *transipDNSProviderSolver) NewTransipClient(ch *v1alpha1.ChallengeReques
 		ok := false
 		privateKey, ok = secret.Data[cfg.PrivateKeySecretRef.Key]
 		if !ok {
-			return nil, fmt.Errorf("no private key for %q in secret '%s/%s'", cfg.PrivateKeySecretRef.Name, cfg.PrivateKeySecretRef.Key, ch.ResourceNamespace)
+			return nil, fmt.Errorf("no private key for %q in secret '%s/%s'", cfg.PrivateKeySecretRef.Key, cfg.PrivateKeySecretRef.Name, ch.ResourceNamespace)
 		}
 	}
 
-	fmt.Printf("creating SOAP client ...\n")
+	klog.V(4).InfoS("Creating TransIP API client", "accountName", cfg.AccountName)
 
 	client, err := gotransip.NewClient(gotransip.ClientConfiguration{
 		AccountName:      cfg.AccountName,
@@ -123,22 +124,22 @@ func (c *transipDNSProviderSolver) Present(ch *v1alpha1.ChallengeRequest) error 
 	domainName := extractDomainName(ch.ResolvedZone)
 	cfg, err := loadConfig(ch.Config)
 	if err != nil {
-		fmt.Printf("Error while loading config: %s\n", err)
+		klog.ErrorS(err, "Failed to load config")
 		return err
 	}
 
 	client, err := c.NewTransipClient(ch, cfg)
 	if err != nil {
-		fmt.Printf("Error while creating SOAP client: %s\n", err)
+		klog.ErrorS(err, "Failed to create TransIP client")
 		return err
 	}
 
-	fmt.Printf("presenting record for %s (%s)\n", ch.ResolvedFQDN, domainName)
+	klog.InfoS("Presenting DNS record for ACME challenge", "fqdn", ch.ResolvedFQDN, "domain", domainName)
 
 	domainRepo := domain.Repository{Client: *client}
 	dnsEntries, err := domainRepo.GetDNSEntries(domainName)
 	if err != nil {
-		fmt.Printf("Error while getting domain info for %s: %s\n", domainName, err)
+		klog.ErrorS(err, "Failed to get DNS entries", "domain", domainName)
 		return err
 	}
 
@@ -147,20 +148,21 @@ func (c *transipDNSProviderSolver) Present(ch *v1alpha1.ChallengeRequest) error 
 	// This method should tolerate being called multiple times
 	// with the same value. If a TXT record for this request
 	// already exists, we'll simply exit.
+	// Compare only name, type, and content (ignore TTL/Expire)
 	for _, s := range dnsEntries {
-		if s == acmeDnsEntry {
-			fmt.Printf("ACME DNS entry already exists, skip\n")
+		if s.Name == acmeDnsEntry.Name && s.Type == acmeDnsEntry.Type && s.Content == acmeDnsEntry.Content {
+			klog.V(4).InfoS("ACME DNS entry already exists, skipping", "name", acmeDnsEntry.Name, "type", acmeDnsEntry.Type)
 			return nil
 		}
 	}
 
 	err = domainRepo.AddDNSEntry(domainName, acmeDnsEntry)
 	if err != nil {
-		fmt.Printf("Error while setting DNS entries for domain %s: %s\n", domainName, err)
+		klog.ErrorS(err, "Failed to add DNS entry", "domain", domainName, "name", acmeDnsEntry.Name)
 		return err
 	}
 
-	fmt.Printf("new record has been set %v", acmeDnsEntry)
+	klog.InfoS("DNS record created successfully", "name", acmeDnsEntry.Name, "type", acmeDnsEntry.Type, "ttl", acmeDnsEntry.Expire)
 
 	return nil
 }
@@ -176,19 +178,22 @@ func (c *transipDNSProviderSolver) CleanUp(ch *v1alpha1.ChallengeRequest) error 
 
 	cfg, err := loadConfig(ch.Config)
 	if err != nil {
+		klog.ErrorS(err, "Failed to load config during cleanup")
 		return err
 	}
 
 	client, err := c.NewTransipClient(ch, cfg)
 	if err != nil {
+		klog.ErrorS(err, "Failed to create TransIP client during cleanup")
 		return err
 	}
 
-	fmt.Printf("cleaning up record for %s (%s)", ch.ResolvedFQDN, domainName)
+	klog.InfoS("Cleaning up DNS record for ACME challenge", "fqdn", ch.ResolvedFQDN, "domain", domainName)
 
 	domainRepo := domain.Repository{Client: *client}
 	dnsEntries, err := domainRepo.GetDNSEntries(domainName)
 	if err != nil {
+		klog.ErrorS(err, "Failed to get DNS entries during cleanup", "domain", domainName)
 		return err
 	}
 
@@ -197,21 +202,23 @@ func (c *transipDNSProviderSolver) CleanUp(ch *v1alpha1.ChallengeRequest) error 
 	// If multiple TXT records exist with the same record name (e.g.
 	// _acme-challenge.example.com) then **only** the record with the same `key`
 	// value provided on the ChallengeRequest should be cleaned up.
-
+	// Compare only name, type, and content (ignore TTL/Expire)
 	for _, s := range dnsEntries {
-		if s == acmeDnsEntry {
-			fmt.Printf("deleting dns record %v", s)
+		if s.Name == acmeDnsEntry.Name && s.Type == acmeDnsEntry.Type && s.Content == acmeDnsEntry.Content {
+			klog.InfoS("Deleting DNS record", "name", s.Name, "type", s.Type)
 
 			err = domainRepo.RemoveDNSEntry(domainName, acmeDnsEntry)
 			if err != nil {
+				klog.ErrorS(err, "Failed to remove DNS entry", "domain", domainName, "name", acmeDnsEntry.Name)
 				return err
 			}
 
+			klog.InfoS("DNS record deleted successfully", "name", acmeDnsEntry.Name)
 			return nil
 		}
 	}
 
-	fmt.Printf("did not find a dns record matching %v", acmeDnsEntry)
+	klog.V(4).InfoS("DNS record not found for cleanup", "name", acmeDnsEntry.Name, "type", acmeDnsEntry.Type)
 
 	return nil
 }
@@ -262,7 +269,7 @@ func extractRecordName(fqdn, domain string) string {
 func extractDomainName(zone string) string {
 	authZone, err := util.FindZoneByFqdn(context.TODO(), zone, util.RecursiveNameservers)
 	if err != nil {
-		fmt.Printf("could not get zone by fqdn %v", err)
+		klog.V(4).InfoS("Could not determine zone by FQDN, using provided zone", "zone", zone, "error", err.Error())
 		return zone
 	}
 	return util.UnFqdn(authZone)
