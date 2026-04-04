@@ -9,12 +9,12 @@ steps:
   persistCredentials: true
   displayName: 'Checkout Code'
 
-- task: gitversion/setup@3.1.0
+- task: gitversion/setup@3.0.0
   displayName: 'Install GitVersion'
   inputs:
     versionSpec: '5.x'
 
-- task: gitversion/execute@3.1.0
+- task: gitversion/execute@3.0.0
   displayName: 'Calculate Version'
 
 - script: |
