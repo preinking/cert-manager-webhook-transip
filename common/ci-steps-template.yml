@@ -1,104 +1,133 @@
 steps:
 
 # ==========================
-# Step Group 1: Code Checkout and Setup
+# Step Group 1: Version and Setup
 # ==========================
 
-# Step 1: Check out the code with full Git history and persist credentials
 - checkout: self
-  fetchDepth: 0  # Fetch the full Git history for accurate versioning calculations
-  persistCredentials: true  # Persist credentials for performing authenticated Git operations
-  displayName: 'Checkout Code with Full History'
+  fetchDepth: 0
+  persistCredentials: true
+  displayName: 'Checkout Code'
 
-# Step 2: Install GitVersion for version management
 - task: gitversion/setup@3.0.0
   displayName: 'Install GitVersion'
   inputs:
-    versionSpec: '6.x'  # Specify the latest 6.x version of GitVersion to install
+    versionSpec: '6.x'
 
-# Step 3: Execute GitVersion to determine the current version
 - task: gitversion/execute@3.0.0
-  displayName: 'Run GitVersion to Determine Version'
+  displayName: 'Calculate Version'
+
+- script: |
+    echo "##[group]Build Information"
+    echo "Version: $(GitVersion.MajorMinorPatch)"
+    echo "Image: $(registryServerName)/$(imageName):$(GitVersion.MajorMinorPatch)"
+    echo "Branch: $(Build.SourceBranch)"
+    echo "Commit: $(Build.SourceVersion)"
+    echo "##[endgroup]"
+  displayName: 'Display Build Info'
 
 # ==========================
-# Step Group 2: Docker Build and Push
+# Step Group 2: Build Docker Image
 # ==========================
 
-# Step 4: Log in to Docker Hub using the configured service connection
-- task: Docker@2
-  displayName: 'Log in to Docker Hub'
-  inputs:
-    command: 'login'
-    containerRegistry: 'Docker Hub'  # Reference the Docker Hub service connection
+- script: |
+    echo "Logging in to Azure Container Registry..."
+    echo $(registryPassword) | docker login $(registryServerName) -u $(registryLogin) --password-stdin
+  displayName: 'Docker Login - ACR'
+  condition: succeeded()
 
-# Step 5: Build the Docker image with informational output redirected to stdout
 - script: |
     echo "Building Docker image..."
-    export COMPOSE_STATUS_STDOUT=1  # Redirect Docker Compose status information to stdout
-    docker build -t $(registryServerName)/$(imageName):$(GitVersion.MajorMinorPatch) .
-  failOnStderr: false  # Do not fail the build on warnings or informational messages
+    docker build \
+      --tag $(registryServerName)/$(imageName):$(GitVersion.MajorMinorPatch) \
+      --tag $(registryServerName)/$(imageName):latest \
+      .
   displayName: 'Build Docker Image'
+  condition: succeeded()
 
-# Step 6: Log in to Azure Container Registry using a service connection
-- task: Docker@2
-  displayName: 'Log in to Azure Container Registry'
-  inputs:
-    command: 'login'
-    containerRegistry: 'Azure Container Registry'  # Reference the ACR service connection
+# ==========================
+# Step Group 3: Security Scan
+# ==========================
 
-# Step 7: Push the Docker image to Azure Container Registry (only on the master branch)
 - script: |
-    echo "Pushing Docker image to Azure Container Registry..."
+    echo "Running Trivy security scan..."
+    docker run --rm \
+      -v /var/run/docker.sock:/var/run/docker.sock \
+      -v $(Agent.TempDirectory):/tmp \
+      ghcr.io/aquasecurity/trivy:latest image \
+      --exit-code 0 \
+      --severity HIGH,CRITICAL \
+      --scanners vuln,misconfig,secret \
+      --ignore-unfixed \
+      --format table \
+      $(registryServerName)/$(imageName):$(GitVersion.MajorMinorPatch)
+
+    echo "##[section]Running strict scan (will fail on HIGH/CRITICAL findings)"
+    docker run --rm \
+      -v /var/run/docker.sock:/var/run/docker.sock \
+      -v $(Agent.TempDirectory):/tmp \
+      ghcr.io/aquasecurity/trivy:latest image \
+      --exit-code 1 \
+      --severity HIGH,CRITICAL \
+      --scanners vuln,misconfig,secret \
+      --ignore-unfixed \
+      --format json \
+      --output /tmp/trivy-results.json \
+      $(registryServerName)/$(imageName):$(GitVersion.MajorMinorPatch)
+  displayName: 'Security Scan with Trivy'
+  condition: succeeded()
+
+- task: PublishBuildArtifacts@1
+  displayName: 'Publish Trivy Results'
+  condition: always()
+  inputs:
+    PathtoPublish: '$(Agent.TempDirectory)/trivy-results.json'
+    ArtifactName: 'security-scan-results'
+    publishLocation: 'Container'
+
+# ==========================
+# Step Group 4: Push Docker Image
+# ==========================
+
+- script: |
+    echo "Pushing Docker image to ACR..."
     docker push $(registryServerName)/$(imageName):$(GitVersion.MajorMinorPatch)
-  failOnStderr: true  # Fail the pipeline if there are errors during the image push
+    docker push $(registryServerName)/$(imageName):latest
+  displayName: 'Push Docker Image'
   condition: and(succeeded(), eq(variables['build.sourceBranch'], 'refs/heads/master'))
-  displayName: 'Push Docker Image to ACR'
 
 # ==========================
-# Step Group 3: Git Tagging
+# Step Group 5: Git Tag
 # ==========================
 
-# Step 8: Create and push a new Git tag (only if all previous steps were successful)
 - script: |
-    echo "Creating and pushing a new Git tag for version $(GitVersion.MajorMinorPatch)..."
-    git config --global user.email "no-reply@quanby.nl"  # Set the Git user email
-    git config --global user.name "CI Bot"  # Set the Git user name
-    git tag -a "v$(GitVersion.MajorMinorPatch)" -m "Release version $(GitVersion.MajorMinorPatch) [skip ci]"
-    git push origin "v$(GitVersion.MajorMinorPatch)"
-  condition: succeeded()  # Only run this step if all previous steps were successful
-  displayName: 'Create and Push Git Tag'
+    git config user.email "no-reply@quanby.nl"
+    git config user.name "CI Bot"
+
+    if git rev-parse "v$(GitVersion.MajorMinorPatch)" >/dev/null 2>&1; then
+      echo "Tag v$(GitVersion.MajorMinorPatch) already exists, skipping..."
+    else
+      echo "Creating tag v$(GitVersion.MajorMinorPatch)..."
+      git tag -a "v$(GitVersion.MajorMinorPatch)" -m "Release $(GitVersion.MajorMinorPatch) [skip ci]"
+      git push origin "v$(GitVersion.MajorMinorPatch)"
+    fi
+  displayName: 'Create Git Tag'
+  condition: and(succeeded(), eq(variables['build.sourceBranch'], 'refs/heads/master'))
 
 # ==========================
-# Step Group 4: Security Scanning
+# Step Group 6: Helm Chart
 # ==========================
 
-# Step 9: Perform a security scan of the Docker image using Trivy
-- task: trivy-contrib@1
-  displayName: 'Run Trivy Vulnerability Scan'
-  inputs:
-    image: $(registryServerName)/$(imageName):$(GitVersion.MajorMinorPatch)
-    ignoreUnfixed: true  # Ignore vulnerabilities that do not have a fix available
-    loginDockerConfig: true  # Use Docker configuration for scanning private images
-  continueOnError: true  # Allow the pipeline to continue even if vulnerabilities are found
-  condition: succeeded()  # Only run the scan if previous steps were successful
-
-# ==========================
-# Step Group 5: Helm Chart Packaging and Deployment
-# ==========================
-
-# Step 10: Install Helm for deploying the application
 - task: HelmInstaller@1
   displayName: 'Install Helm'
   inputs:
-    helmVersionToInstall: $(helmVersion)  # Specify the Helm version to install
+    helmVersionToInstall: $(helmVersion)
 
-# Step 11: Enable OCI support for Helm to push charts to ACR
 - script: |
-    echo "Enabling OCI support for Helm..."
+    echo "Logging in to Helm OCI registry..."
     helm registry login $(registryServerName) --username $(registryLogin) --password $(registryPassword)
-  displayName: 'Helm OCI Registry Login'
+  displayName: 'Helm Registry Login'
 
-# Step 12: Package the Helm chart with the determined version
 - script: |
     echo "Packaging Helm chart..."
     helm package --version $(GitVersion.MajorMinorPatch) --app-version $(GitVersion.MajorMinorPatch) charts/$(projectName)
@@ -108,21 +137,15 @@ steps:
     fi
   displayName: 'Package Helm Chart'
 
-# Step 13: Push the packaged Helm chart to Azure Container Registry using OCI
 - script: |
-    echo "Pushing Helm chart to Azure Container Registry..."
+    echo "Pushing Helm chart to ACR..."
     chartPackage=$(ls $(projectName)-$(GitVersion.MajorMinorPatch).tgz)
     helm push $chartPackage oci://$(registryName).azurecr.io/helm
     echo $(jq -n --arg version "$(GitVersion.MajorMinorPatch)" '{helmChartVersion: $version}') > $(build.artifactStagingDirectory)/variables.json
-  failOnStderr: false  # Do not fail if there are non-fatal warnings
+  failOnStderr: false
   condition: and(succeeded(), eq(variables['build.sourceBranch'], 'refs/heads/master'))
   displayName: 'Push Helm Chart to ACR'
 
-# ==========================
-# Step Group 6: Publish Build Artifacts
-# ==========================
-
-# Step 14: Publish the build artifacts (only on the master branch)
 - publish: $(build.artifactStagingDirectory)
   artifact: build-artifact
   condition: and(succeeded(), eq(variables['build.sourceBranch'], 'refs/heads/master'))
