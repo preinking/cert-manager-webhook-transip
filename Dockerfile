@@ -18,7 +18,7 @@ RUN CGO_ENABLED=0 go build -o webhook \
 
 FROM alpine:3.23
 
-RUN apk add --no-cache ca-certificates
+RUN apk upgrade --no-cache && apk add --no-cache ca-certificates
 
 COPY --from=build /workspace/webhook /usr/local/bin/webhook
 
