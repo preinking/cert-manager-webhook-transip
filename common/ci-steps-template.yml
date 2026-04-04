@@ -9,12 +9,12 @@ steps:
   persistCredentials: true
   displayName: 'Checkout Code'
 
-- task: gitversion/setup@3.0.0
+- task: gitversion/setup@3.1.0
   displayName: 'Install GitVersion'
   inputs:
     versionSpec: '5.x'
 
-- task: gitversion/execute@3.0.0
+- task: gitversion/execute@3.1.0
   displayName: 'Calculate Version'
 
 - script: |
@@ -124,29 +124,73 @@ steps:
     helmVersionToInstall: $(helmVersion)
 
 - script: |
-    echo "Logging in to Helm OCI registry..."
-    helm registry login $(registryServerName) --username $(registryLogin) --password $(registryPassword)
+    echo "Logging into Helm OCI registry..."
+    echo "$(registryPassword)" | helm registry login $(registryServerName) \
+      --username $(registryLogin) \
+      --password-stdin
   displayName: 'Helm Registry Login'
 
 - script: |
-    echo "Packaging Helm chart..."
-    helm package --version $(GitVersion.MajorMinorPatch) --app-version $(GitVersion.MajorMinorPatch) charts/$(projectName)
-    if [ ! -f "$(projectName)-$(GitVersion.MajorMinorPatch).tgz" ]; then
-        echo "Error: Helm chart package not found!"
-        exit 1
+    echo "Updating Chart.yaml versions to $(GitVersion.MajorMinorPatch)..."
+
+    sed -i "s/^version: .*/version: $(GitVersion.MajorMinorPatch)/" charts/$(projectName)/Chart.yaml
+    sed -i "s/^appVersion: .*/appVersion: \"$(GitVersion.MajorMinorPatch)\"/" charts/$(projectName)/Chart.yaml
+
+    echo "##[group]Chart.yaml changes"
+    cat charts/$(projectName)/Chart.yaml | grep -E "^(version|appVersion):"
+    echo "##[endgroup]"
+
+    if git diff --quiet charts/$(projectName)/Chart.yaml; then
+      echo "No changes to Chart.yaml, skipping commit..."
+    else
+      git add charts/$(projectName)/Chart.yaml
+      git commit -m "Update Chart version to $(GitVersion.MajorMinorPatch) [skip ci]"
+      git push origin HEAD:master
     fi
+  displayName: 'Update Chart Version'
+  condition: and(succeeded(), eq(variables['build.sourceBranch'], 'refs/heads/master'))
+
+- script: |
+    echo "Packaging Helm chart..."
+    helm package \
+      --version $(GitVersion.MajorMinorPatch) \
+      --app-version $(GitVersion.MajorMinorPatch) \
+      charts/$(projectName)
+
+    if [ ! -f "$(projectName)-$(GitVersion.MajorMinorPatch).tgz" ]; then
+      echo "##[error]Helm chart package not found!"
+      exit 1
+    fi
+
+    echo "##[section]Chart package created: $(projectName)-$(GitVersion.MajorMinorPatch).tgz"
+    ls -lh $(projectName)-$(GitVersion.MajorMinorPatch).tgz
   displayName: 'Package Helm Chart'
+  condition: and(succeeded(), eq(variables['build.sourceBranch'], 'refs/heads/master'))
 
 - script: |
     echo "Pushing Helm chart to ACR..."
-    chartPackage=$(ls $(projectName)-$(GitVersion.MajorMinorPatch).tgz)
-    helm push $chartPackage oci://$(registryName).azurecr.io/helm
-    echo $(jq -n --arg version "$(GitVersion.MajorMinorPatch)" '{helmChartVersion: $version}') > $(build.artifactStagingDirectory)/variables.json
-  failOnStderr: false
-  condition: and(succeeded(), eq(variables['build.sourceBranch'], 'refs/heads/master'))
-  displayName: 'Push Helm Chart to ACR'
+    helm push $(projectName)-$(GitVersion.MajorMinorPatch).tgz \
+      oci://$(registryName).azurecr.io/helm
 
-- publish: $(build.artifactStagingDirectory)
-  artifact: build-artifact
+    mkdir -p $(Build.ArtifactStagingDirectory)
+    echo "{\"helmChartVersion\": \"$(GitVersion.MajorMinorPatch)\"}" > $(Build.ArtifactStagingDirectory)/variables.json
+  displayName: 'Push Helm Chart'
   condition: and(succeeded(), eq(variables['build.sourceBranch'], 'refs/heads/master'))
+
+# ==========================
+# Step Group 7: Publish Artifacts
+# ==========================
+
+- publish: $(Build.ArtifactStagingDirectory)
+  artifact: build-artifact
   displayName: 'Publish Build Artifacts'
+  condition: and(succeeded(), eq(variables['build.sourceBranch'], 'refs/heads/master'))
+
+- script: |
+    echo "##[section]Build Summary"
+    echo "Version: $(GitVersion.MajorMinorPatch)"
+    echo "Docker Image: $(registryServerName)/$(imageName):$(GitVersion.MajorMinorPatch)"
+    echo "Helm Chart: oci://$(registryName).azurecr.io/helm/$(projectName):$(GitVersion.MajorMinorPatch)"
+    echo "Git Tag: v$(GitVersion.MajorMinorPatch)"
+  displayName: 'Build Summary'
+  condition: succeeded()
