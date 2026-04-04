@@ -1,5 +1,5 @@
 apiVersion: v2
-appVersion: "1.15.7"
+appVersion: "1.15.8"
 description: A Helm chart for cert-manager-webhook-transip
 name: cert-manager-webhook-transip
-version: 1.15.7
+version: 1.15.8
