@@ -9,8 +9,7 @@ trigger:
 
 pr: none
 
-pool:
-  vmImage: ubuntu-latest
+pool: quanby-lab
 
 variables:
 - template: ./common/ci-vars-template.yml

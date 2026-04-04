@@ -14,8 +14,8 @@ certManager:
 
 image:
   repository: quanby/cert-manager-webhook-transip
-  tag: 1.14.5
-  pullPolicy: Always
+  tag: v1.20.1
+  pullPolicy: IfNotPresent
 
 nameOverride: ""
 fullnameOverride: ""
