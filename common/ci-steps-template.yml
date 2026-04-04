@@ -1,9 +1,5 @@
 steps:
 
-# ==========================
-# Step Group 1: Version and Setup
-# ==========================
-
 - checkout: self
   fetchDepth: 0
   persistCredentials: true
@@ -22,127 +18,69 @@ steps:
     echo "Version: $(GitVersion.MajorMinorPatch)"
     echo "Image: $(registryServerName)/$(imageName):$(GitVersion.MajorMinorPatch)"
     echo "Branch: $(Build.SourceBranch)"
-    echo "Commit: $(Build.SourceVersion)"
     echo "##[endgroup]"
   displayName: 'Display Build Info'
 
-# ==========================
-# Step Group 2: Build Docker Image
-# ==========================
-
 - script: |
-    echo "Logging in to Azure Container Registry..."
-    echo $(registryPassword) | docker login $(registryServerName) -u $(registryLogin) --password-stdin
-  displayName: 'Docker Login - ACR'
-  condition: succeeded()
-
-- script: |
-    echo "Building Docker image..."
     docker build \
       --tag $(registryServerName)/$(imageName):$(GitVersion.MajorMinorPatch) \
       --tag $(registryServerName)/$(imageName):latest \
       .
   displayName: 'Build Docker Image'
-  condition: succeeded()
-
-# ==========================
-# Step Group 3: Security Scan
-# ==========================
 
 - script: |
-    echo "Running Trivy security scan..."
     docker run --rm \
       -v /var/run/docker.sock:/var/run/docker.sock \
       -v $(Agent.TempDirectory):/tmp \
-      ghcr.io/aquasecurity/trivy:latest image \
-      --exit-code 0 \
+      ghcr.io/aquasecurity/trivy:0.69.3 image \
+      --exit-code 1 \
       --severity HIGH,CRITICAL \
       --scanners vuln,misconfig,secret \
       --ignore-unfixed \
       --format table \
       $(registryServerName)/$(imageName):$(GitVersion.MajorMinorPatch)
-
-    echo "##[section]Running strict scan (will fail on HIGH/CRITICAL findings)"
-    docker run --rm \
-      -v /var/run/docker.sock:/var/run/docker.sock \
-      -v $(Agent.TempDirectory):/tmp \
-      ghcr.io/aquasecurity/trivy:latest image \
-      --exit-code 1 \
-      --severity HIGH,CRITICAL \
-      --scanners vuln,misconfig,secret \
-      --ignore-unfixed \
-      --format json \
-      --output /tmp/trivy-results.json \
-      $(registryServerName)/$(imageName):$(GitVersion.MajorMinorPatch)
   displayName: 'Security Scan with Trivy'
-  condition: succeeded()
-
-- task: PublishBuildArtifacts@1
-  displayName: 'Publish Trivy Results'
-  condition: always()
-  inputs:
-    PathtoPublish: '$(Agent.TempDirectory)/trivy-results.json'
-    ArtifactName: 'security-scan-results'
-    publishLocation: 'Container'
-
-# ==========================
-# Step Group 4: Push Docker Image
-# ==========================
 
 - script: |
-    echo "Pushing Docker image to ACR..."
+    echo $(registryPassword) | docker login $(registryServerName) -u $(registryLogin) --password-stdin
+  displayName: 'Docker Login - ACR'
+  condition: and(succeeded(), eq(variables['build.sourceBranch'], 'refs/heads/master'))
+
+- script: |
     docker push $(registryServerName)/$(imageName):$(GitVersion.MajorMinorPatch)
     docker push $(registryServerName)/$(imageName):latest
   displayName: 'Push Docker Image'
   condition: and(succeeded(), eq(variables['build.sourceBranch'], 'refs/heads/master'))
 
-# ==========================
-# Step Group 5: Git Tag
-# ==========================
-
 - script: |
     git config user.email "no-reply@quanby.nl"
     git config user.name "CI Bot"
-
-    if git rev-parse "v$(GitVersion.MajorMinorPatch)" >/dev/null 2>&1; then
+    if git tag -l "v$(GitVersion.MajorMinorPatch)" | grep -q .; then
       echo "Tag v$(GitVersion.MajorMinorPatch) already exists, skipping..."
     else
-      echo "Creating tag v$(GitVersion.MajorMinorPatch)..."
       git tag -a "v$(GitVersion.MajorMinorPatch)" -m "Release $(GitVersion.MajorMinorPatch) [skip ci]"
       git push origin "v$(GitVersion.MajorMinorPatch)"
     fi
   displayName: 'Create Git Tag'
   condition: and(succeeded(), eq(variables['build.sourceBranch'], 'refs/heads/master'))
 
-# ==========================
-# Step Group 6: Helm Chart
-# ==========================
-
 - task: HelmInstaller@1
   displayName: 'Install Helm'
+  condition: and(succeeded(), eq(variables['build.sourceBranch'], 'refs/heads/master'))
   inputs:
     helmVersionToInstall: $(helmVersion)
 
 - script: |
-    echo "Logging into Helm OCI registry..."
     echo "$(registryPassword)" | helm registry login $(registryServerName) \
       --username $(registryLogin) \
       --password-stdin
   displayName: 'Helm Registry Login'
+  condition: and(succeeded(), eq(variables['build.sourceBranch'], 'refs/heads/master'))
 
 - script: |
-    echo "Updating Chart.yaml versions to $(GitVersion.MajorMinorPatch)..."
-
     sed -i "s/^version: .*/version: $(GitVersion.MajorMinorPatch)/" charts/$(projectName)/Chart.yaml
     sed -i "s/^appVersion: .*/appVersion: \"$(GitVersion.MajorMinorPatch)\"/" charts/$(projectName)/Chart.yaml
-
-    echo "##[group]Chart.yaml changes"
-    cat charts/$(projectName)/Chart.yaml | grep -E "^(version|appVersion):"
-    echo "##[endgroup]"
-
-    if git diff --quiet charts/$(projectName)/Chart.yaml; then
-      echo "No changes to Chart.yaml, skipping commit..."
-    else
+    if ! git diff --quiet charts/$(projectName)/Chart.yaml; then
       git add charts/$(projectName)/Chart.yaml
       git commit -m "Update Chart version to $(GitVersion.MajorMinorPatch) [skip ci]"
       git push origin HEAD:master
@@ -151,46 +89,22 @@ steps:
   condition: and(succeeded(), eq(variables['build.sourceBranch'], 'refs/heads/master'))
 
 - script: |
-    echo "Packaging Helm chart..."
     helm package \
       --version $(GitVersion.MajorMinorPatch) \
       --app-version $(GitVersion.MajorMinorPatch) \
       charts/$(projectName)
-
-    if [ ! -f "$(projectName)-$(GitVersion.MajorMinorPatch).tgz" ]; then
-      echo "##[error]Helm chart package not found!"
-      exit 1
-    fi
-
-    echo "##[section]Chart package created: $(projectName)-$(GitVersion.MajorMinorPatch).tgz"
-    ls -lh $(projectName)-$(GitVersion.MajorMinorPatch).tgz
   displayName: 'Package Helm Chart'
   condition: and(succeeded(), eq(variables['build.sourceBranch'], 'refs/heads/master'))
 
 - script: |
-    echo "Pushing Helm chart to ACR..."
     helm push $(projectName)-$(GitVersion.MajorMinorPatch).tgz \
       oci://$(registryName).azurecr.io/helm
-
     mkdir -p $(Build.ArtifactStagingDirectory)
     echo "{\"helmChartVersion\": \"$(GitVersion.MajorMinorPatch)\"}" > $(Build.ArtifactStagingDirectory)/variables.json
   displayName: 'Push Helm Chart'
   condition: and(succeeded(), eq(variables['build.sourceBranch'], 'refs/heads/master'))
 
-# ==========================
-# Step Group 7: Publish Artifacts
-# ==========================
-
 - publish: $(Build.ArtifactStagingDirectory)
   artifact: build-artifact
   displayName: 'Publish Build Artifacts'
   condition: and(succeeded(), eq(variables['build.sourceBranch'], 'refs/heads/master'))
-
-- script: |
-    echo "##[section]Build Summary"
-    echo "Version: $(GitVersion.MajorMinorPatch)"
-    echo "Docker Image: $(registryServerName)/$(imageName):$(GitVersion.MajorMinorPatch)"
-    echo "Helm Chart: oci://$(registryName).azurecr.io/helm/$(projectName):$(GitVersion.MajorMinorPatch)"
-    echo "Git Tag: v$(GitVersion.MajorMinorPatch)"
-  displayName: 'Build Summary'
-  condition: succeeded()
