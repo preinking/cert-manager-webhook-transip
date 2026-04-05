@@ -17,6 +17,7 @@ resources:
       ref: refs/heads/main
 
 variables:
+  - group: kv-quanby
   - template: pipelines/templates/ci-vars-template.yml@quanby-lab
     parameters:
       projectName: cert-manager-webhook-transip
