@@ -3,19 +3,25 @@ trigger:
   branches:
     include:
     - '*'
-  paths:
-    include:
-    - common/ci-steps-template.yml
 
 pr: none
 
 pool: quanby-lab
 
+resources:
+  repositories:
+    - repository: quanby-lab
+      type: github
+      name: preinking/quanby-lab
+      endpoint: github-quanby
+      ref: refs/heads/main
+
 variables:
-- template: ./common/ci-vars-template.yml
-  parameters:
+  - template: pipelines/templates/ci-vars-template.yml@quanby-lab
+    parameters:
       projectName: cert-manager-webhook-transip
-  # define 3 more variables: registryName, registryLogin and registryPassword in the Azure pipeline UI definition
 
 steps:
-- template: ./common/ci-steps-template.yml
+  - template: pipelines/templates/ci-steps-template.yml@quanby-lab
+    parameters:
+      publishHelm: true
