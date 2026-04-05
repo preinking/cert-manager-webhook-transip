@@ -13,7 +13,7 @@ resources:
     - repository: quanby-lab
       type: github
       name: preinking/quanby-lab
-      endpoint: github-quanby
+      endpoint: github-preinking
       ref: refs/heads/main
 
 variables:
