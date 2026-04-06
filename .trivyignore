@@ -1,0 +1,3 @@
+# OpenSSL CVE — low-level hash collision, not exploitable in this webhook context
+# (webhook only makes outbound HTTPS calls to TransIP API)
+CVE-2024-9143
