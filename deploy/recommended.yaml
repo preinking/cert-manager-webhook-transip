@@ -6,7 +6,7 @@ metadata:
   name: cert-manager-webhook-transip
   labels:
     app: cert-manager-webhook-transip
-    chart: cert-manager-webhook-transip-1.20.1
+    chart: cert-manager-webhook-transip-1.20.4
     release: cert-manager-webhook-transip
     heritage: Helm
 ---
@@ -18,7 +18,7 @@ metadata:
   name: cert-manager-webhook-transip:domain-solver
   labels:
     app: cert-manager-webhook-transip
-    chart: cert-manager-webhook-transip-1.20.1
+    chart: cert-manager-webhook-transip-1.20.4
     release: cert-manager-webhook-transip
     heritage: Helm
 rules:
@@ -36,7 +36,7 @@ metadata:
   name: cert-manager-webhook-transip:flowcontrol-solver
   labels:
     app: cert-manager-webhook-transip
-    chart: cert-manager-webhook-transip-1.20.1
+    chart: cert-manager-webhook-transip-1.20.4
     release: cert-manager-webhook-transip
     heritage: Helm
 rules:
@@ -58,7 +58,7 @@ metadata:
   name: cert-manager-webhook-transip:auth-delegator
   labels:
     app: cert-manager-webhook-transip
-    chart: cert-manager-webhook-transip-1.20.1
+    chart: cert-manager-webhook-transip-1.20.4
     release: cert-manager-webhook-transip
     heritage: Helm
 roleRef:
@@ -78,7 +78,7 @@ metadata:
   name: cert-manager-webhook-transip:domain-solver
   labels:
     app: cert-manager-webhook-transip
-    chart: cert-manager-webhook-transip-1.20.1
+    chart: cert-manager-webhook-transip-1.20.4
     release: cert-manager-webhook-transip
     heritage: Helm
 roleRef:
@@ -98,7 +98,7 @@ metadata:
   name: cert-manager-webhook-transip:flowcontrol-solver
   labels:
     app: cert-manager-webhook-transip
-    chart: cert-manager-webhook-transip-1.20.1
+    chart: cert-manager-webhook-transip-1.20.4
     release: cert-manager-webhook-transip
     heritage: Helm
 roleRef:
@@ -110,9 +110,10 @@ subjects:
     kind: ServiceAccount
     name: cert-manager-webhook-transip
     namespace: "cert-manager"
+
 ---
 # Source: cert-manager-webhook-transip/templates/rbac.yaml
-# Grant cert-manager permission to read secrets from cert-manager ns (i.e. to read the api key for transip)
+# Grant the webhook permission to read secrets from the cert-manager ns (i.e. to read the api key for transip)
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -120,7 +121,7 @@ metadata:
   namespace: cert-manager
   labels:
     app: cert-manager-webhook-transip
-    chart: cert-manager-webhook-transip-1.20.1
+    chart: cert-manager-webhook-transip-1.20.4
     release: cert-manager-webhook-transip
     heritage: Helm
 rules:
@@ -142,7 +143,7 @@ metadata:
   namespace: kube-system
   labels:
     app: cert-manager-webhook-transip
-    chart: cert-manager-webhook-transip-1.20.1
+    chart: cert-manager-webhook-transip-1.20.4
     release: cert-manager-webhook-transip
     heritage: Helm
 roleRef:
@@ -163,7 +164,7 @@ metadata:
   namespace: cert-manager
   labels:
     app: cert-manager-webhook-transip
-    chart: cert-manager-webhook-transip-1.20.1
+    chart: cert-manager-webhook-transip-1.20.4
     release: cert-manager-webhook-transip
     heritage: Helm
 roleRef:
@@ -183,7 +184,7 @@ metadata:
   name: cert-manager-webhook-transip
   labels:
     app: cert-manager-webhook-transip
-    chart: cert-manager-webhook-transip-1.20.1
+    chart: cert-manager-webhook-transip-1.20.4
     release: cert-manager-webhook-transip
     heritage: Helm
 spec:
@@ -196,6 +197,7 @@ spec:
   selector:
     app: cert-manager-webhook-transip
     release: cert-manager-webhook-transip
+
 ---
 # Source: cert-manager-webhook-transip/templates/deployment.yaml
 apiVersion: apps/v1
@@ -204,11 +206,11 @@ metadata:
   name: cert-manager-webhook-transip
   labels:
     app: cert-manager-webhook-transip
-    chart: cert-manager-webhook-transip-1.20.1
+    chart: cert-manager-webhook-transip-1.20.4
     release: cert-manager-webhook-transip
     heritage: Helm
 spec:
-  replicas: 
+  replicas: 1
   selector:
     matchLabels:
       app: cert-manager-webhook-transip
@@ -222,7 +224,7 @@ spec:
       serviceAccountName: cert-manager-webhook-transip
       containers:
         - name: cert-manager-webhook-transip
-          image: "preinking/cert-manager-webhook-transip:v1.20.1"
+          image: "preinking/cert-manager-webhook-transip:v1.20.4"
           imagePullPolicy: IfNotPresent
           args:
             - --tls-cert-file=/tls/tls.crt
@@ -254,6 +256,7 @@ spec:
         - name: certs
           secret:
             secretName: cert-manager-webhook-transip-webhook-tls
+
 ---
 # Source: cert-manager-webhook-transip/templates/apiservice.yaml
 apiVersion: apiregistration.k8s.io/v1
@@ -262,7 +265,7 @@ metadata:
   name: v1alpha1.cert-manager.webhook.transip
   labels:
     app: cert-manager-webhook-transip
-    chart: cert-manager-webhook-transip-1.20.1
+    chart: cert-manager-webhook-transip-1.20.4
     release: cert-manager-webhook-transip
     heritage: Helm
   annotations:
@@ -275,6 +278,7 @@ spec:
     name: cert-manager-webhook-transip
     namespace: cert-manager
   version: v1alpha1
+
 ---
 # Source: cert-manager-webhook-transip/templates/pki.yaml
 # Generate a CA Certificate used to sign certificates for the webhook
@@ -285,7 +289,7 @@ metadata:
   namespace: "cert-manager"
   labels:
     app: cert-manager-webhook-transip
-    chart: cert-manager-webhook-transip-1.20.1
+    chart: cert-manager-webhook-transip-1.20.4
     release: cert-manager-webhook-transip
     heritage: Helm
 spec:
@@ -305,7 +309,7 @@ metadata:
   namespace: "cert-manager"
   labels:
     app: cert-manager-webhook-transip
-    chart: cert-manager-webhook-transip-1.20.1
+    chart: cert-manager-webhook-transip-1.20.4
     release: cert-manager-webhook-transip
     heritage: Helm
 spec:
@@ -317,6 +321,7 @@ spec:
   - cert-manager-webhook-transip
   - cert-manager-webhook-transip.cert-manager
   - cert-manager-webhook-transip.cert-manager.svc
+
 ---
 # Source: cert-manager-webhook-transip/templates/pki.yaml
 # Create a selfsigned Issuer, in order to create a root CA certificate for
@@ -328,7 +333,7 @@ metadata:
   namespace: "cert-manager"
   labels:
     app: cert-manager-webhook-transip
-    chart: cert-manager-webhook-transip-1.20.1
+    chart: cert-manager-webhook-transip-1.20.4
     release: cert-manager-webhook-transip
     heritage: Helm
 spec:
@@ -343,7 +348,7 @@ metadata:
   namespace: "cert-manager"
   labels:
     app: cert-manager-webhook-transip
-    chart: cert-manager-webhook-transip-1.20.1
+    chart: cert-manager-webhook-transip-1.20.4
     release: cert-manager-webhook-transip
     heritage: Helm
 spec:

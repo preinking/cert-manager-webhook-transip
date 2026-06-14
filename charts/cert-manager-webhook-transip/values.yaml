@@ -8,14 +8,21 @@
 # here is recommended.
 groupName: cert-manager.webhook.transip
 
+# Number of webhook pods to run. The webhook is stateless; a single replica is
+# sufficient for correctness (cert-manager retries challenges).
+replicaCount: 1
+
 certManager:
   namespace: cert-manager
   serviceAccountName: cert-manager
 
 image:
   repository: preinking/cert-manager-webhook-transip
-  tag: v1.20.1
+  tag: v1.20.4
   pullPolicy: IfNotPresent
+  # Name of an imagePullSecret for pulling the image from a private registry.
+  # Leave empty for public/anonymous pulls.
+  privateRegistrySecretName: ""
 
 nameOverride: ""
 fullnameOverride: ""
