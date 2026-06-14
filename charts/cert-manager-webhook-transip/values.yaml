@@ -17,8 +17,10 @@ certManager:
   serviceAccountName: cert-manager
 
 image:
-  repository: preinking/cert-manager-webhook-transip
-  tag: v1.20.4
+  repository: quanby.azurecr.io/cert-manager-webhook-transip
+  # Empty tag tracks Chart.appVersion (bumped by CI on release), so the default
+  # image always matches the chart version. Override only to pin a specific tag.
+  tag: ""
   pullPolicy: IfNotPresent
   # Name of an imagePullSecret for pulling the image from a private registry.
   # Leave empty for public/anonymous pulls.
